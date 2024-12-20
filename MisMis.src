@@ -1,0 +1,573 @@
+KeywordsAll = [
+	"break",
+	"continue",
+	"else",
+	"end",
+	"for",
+	"function",
+	"if",
+	"in",
+	"isa",
+	"new",
+	"null",
+	"then",
+	"repeat",
+	"return",
+	"while",
+	"and",
+	"or",
+	"not",
+	"true",
+	"false",
+]
+// @return void
+WriteLine = function(value="", replaceText=0)
+	print(@value, @replaceText)
+end function
+// @return void
+ReportError = function(err)
+	WriteLine(@err)
+end function
+// @return void
+ErrorIf = function(condition, err)
+	if @condition then ReportError(@err)
+end function
+// @return void
+ErrorIfNull = function(obj)
+	if @obj == null then ReportError("Unexpected null")
+end function
+// @return bool
+IsKeyword = function(text)
+	return KeywordsAll.indexOf(@text) != null
+end function
+
+// @context       sourceLoc[0]	string
+// @lineNum       sourceLoc[1]	int
+NewSourceLoc = function(context, lineNum)
+	return [@context, @lineNum]
+end function
+SourceLocToString = function(sourceLoc)
+	if @sourceLoc[0] == null or sourceLoc[0].len == 0 then
+		return "[line " + @sourceLoc[1] + "]"
+	else
+		return "[context" + @sourceLoc[0] + "line " + @sourceLoc[1] + "]"
+	end if
+end function
+
+Exception = {
+    "message": "",
+	"location": null,
+}
+NewExceptionM = function(message)
+	ret = new @Exception
+	@ret.message = @message
+	return @ret
+end function
+NewExceptionCLM = function(context, lineNum, message)
+	ret = new @Exception
+	@ret.message = @message
+	@ret.location = NewSourceLoc(@context, @lineNum)
+	return @ret
+end function
+ExceptionDescription = function(e)
+	desc = "Error: "
+	if @e isa @LexerException then 
+		desc = "Lexer Error: "
+	else if @e isa @CompilerException then 
+		desc = "Compiler Error: "
+	else if @e isa @RuntimeException then 
+		desc = "Runtime Error: "
+	end if
+	desc = @desc + @e.message
+	if @e.location != null then desc = @desc + " " + SourceLocToString(@e.location)
+	return @desc
+end function
+
+LexerException = new Exception
+NewLexerExceptionM = function(message)
+	ret = new @Exception
+	@ret.message = @message
+	return @ret
+end function
+
+TypeUnknown = "Unknown"
+TypeKeyword = "Keyword"
+TypeNumber = "Number"
+TypeString = "String"
+TypeIdentifier = "Identifier"
+TypeOpAssign = "OpAssign"
+TypeOpPlus = "OpPlus"
+TypeOpMinus = "OpMinus"
+TypeOpTimes = "OpTimes"
+TypeOpDivide = "OpDivide"
+TypeOpMod = "OpMod"
+TypeOpPower = "OpPower"
+TypeOpEqual = "OpEqual"
+TypeOpNotEqual = "OpNotEqual"
+TypeOpGreater = "OpGreater"
+TypeOpGreatEqual = "OpGreatEqual"
+TypeOpLesser = "OpLesser"
+TypeOpLessEqual = "OpLessEqual"
+TypeOpAssignPlus = "OpAssignPlus"
+TypeOpAssignMinus = "OpAssignMinus"
+TypeOpAssignTimes = "OpAssignTimes"
+TypeOpAssignDivide = "OpAssignDivide"
+TypeOpAssignMod = "OpAssignMod"
+TypeOpAssignPower = "OpAssignPower"
+TypeLParen = "LParen"
+TypeRParen = "RParen"
+TypeLSquare = "LSquare"
+TypeRSquare = "RSquare"
+TypeLCurly = "LCurly"
+TypeRCurly = "RCurly"
+TypeAddressOf = "AddressOf"
+TypeComma = "Comma"
+TypeDot = "Dot"
+TypeColon = "Colon"
+TypeComment = "Comment"
+TypeEOL = "EOL"
+
+// @type       token[0]	Type
+// @text       token[1]	string
+// @afterSpace token[2]	bool
+NewToken = function(type=null, text=null)
+    if @type == null then
+        @type = @TypeUnknown
+    end if
+    return [@type, @TypeUnknown, false]
+end function
+
+TokenToString = function(token)
+    if @token[1] == null then return @token[0]
+    return @token[0]+"("+@token[1]+")"
+end function
+TokenEOL = NewToken(@TypeEOL)
+
+// @return 1 | 0
+LexerAtEnd = function(lexer)
+    return @lexer[1] >= @lexer[3] and lexer[4].len == 0
+end function
+
+// @lineNum 	lexer[0]	int
+// @position 	lexer[1]	int
+// @input 		lexer[2]	string
+// @inputLength lexer[3]	int
+// @pending 	lexer[4]	Queue<Token>
+NewLexer = function(input)
+    return [1, 0, @input, input.len, []]
+end function
+
+// @throwable
+// @return Token
+LexerPeek = function(lexer)
+    if lexer[4].len == 0 then
+        if LexerAtEnd(@lexer) then return TokenEOL
+		e = LexerDequeue(@lexer)
+		if @e isa @Exception then return @e
+        lexer[4].push(e)
+    end if
+    return @lexer[4][0]
+end function
+
+// @throwable
+// @return Token
+LexerDequeue = function(lexer)
+    if lexer[4].len > 0 then
+        dequeue = @lexer[4][0]
+        lexer[4].remove(0)
+        return dequeue
+    end if
+
+    oldPos = @lexer[1]
+    LexerSkipWhitespaceAndComment(@lexer)
+
+    if LexerAtEnd(@lexer) then return @TokenEOL
+
+    result = NewToken()
+    result[2] = @lexer[1] > @oldPos
+    startPos = @lexer[1]
+    c = @lexer[2][@lexer[1]]
+    lexer[1] = @lexer[1] + 1
+    if not LexerAtEnd(@lexer) then
+		c2 = @lexer[2][@lexer[1]]
+		if @c2 == "=" then
+			if @c == "=" then
+				result[0] = @TypeOpEqual
+			else if @c == "+" then
+				result[0] = @TypeOpAssignPlus
+			else if @c == "-" then
+				result[0] = @TypeOpAssignMinus
+			else if @c == "*" then
+				result[0] = @TypeOpAssignTimes
+			else if @c == "/" then
+				result[0] = @TypeOpAssignDivide
+			else if @c == "%" then
+				result[0] = @TypeOpAssignMod
+			else if @c == "^" then
+				result[0] = @TypeOpAssignPower
+			end if
+		end if
+		if @c == "!" and @c2 == "=" then
+			result[0] = @TypeOpNotEqual
+		end if
+		if @c == ">" and @c2 == "=" then
+			result[0] = @TypeOpGreatEqual
+		end if
+		if @c == "<" and @c2 == "=" then
+			result[0] = @TypeOpLessEqual
+		end if
+		if @result[0] != @TypeUnknown then
+			lexer[1] = @lexer[1] + 1
+			return @result
+		end if
+	end if
+
+	if @c == "+" then
+		result[0] = @TypeOpPlus
+	else if @c == "-" then
+		result[0] = @TypeOpMinus
+	else if @c == "*" then
+		result[0] = @TypeOpTimes
+	else if @c == "/" then
+		result[0] = @TypeOpDivide
+	else if @c == "%" then
+		result[0] = @TypeOpMod
+	else if @c == "^" then
+		result[0] = @TypeOpPower
+	else if @c == "(" then
+		result[0] = @TypeLParen
+	else if @c == ")" then
+		result[0] = @TypeRParen
+	else if @c == "[" then
+		result[0] = @TypeLSquare
+	else if @c == "]" then
+		result[0] = @TypeRSquare
+	else if @c == "{" then
+		result[0] = @TypeLCurly
+	else if @c == "}" then
+		result[0] = @TypeRCurly
+	else if @c == "," then
+		result[0] = @TypeComma
+	else if @c == ":" then
+		result[0] = @TypeColon
+	else if @c == "=" then
+		result[0] = @TypeOpAssign
+	else if @c == "<" then
+		result[0] = @TypeOpLesser
+	else if @c == ">" then
+		result[0] = @TypeOpGreater
+	else if @c == "@" then
+		result[0] = @TypeAddressOf
+	else if @c == ";" or @c == char(10) then
+		result[0] = @TypeEOL
+		if @c == ";" then
+			result[1] = ";"
+		else
+			result[1] = char(10)
+		end if
+		if @c != ";" then lexer[0] = @lexer[0] + 1
+    end if
+	if @c == char(13) then
+		result[0] = @TypeEOL
+		if @lexer[1] < @lexer[3] and @lexer[2][@lexer[1]] == char(10) then
+			lexer[1] = @lexer[1] + 1
+			result[1] = char(13) + char(10)
+		else
+			result[1] = char(13)
+		end if
+		lexer[0] = @lexer[0] + 1
+	end if
+    if result[0] != @TypeUnknown then return @result
+
+	if @c == "." then
+		if @lexer[1] >= @lexer[3] or not IsNumeric(@lexer[2][@lexer[1]]) then
+			@result[0] = TypeDot
+			return @result
+		end if
+	end if
+	if @c == "." or IsNumeric(@c) then
+		result[0] = @TypeNumber
+		while @lexer[1] < @lexer[3]
+			lastc = @c
+			c = @lexer[2][@lexer[1]]
+			if IsNumeric(@c) or @c == "." or @c == "E" or @c == "e" or 
+				((@c == "-" or @c == "+") and (@lastc == "E" or @lastc == "e")) then
+				@lexer[1] = @lexer[1] + 1
+			else
+				break
+			end if
+		end while
+	else if IsIdentifier(c) then
+		while @lexer[1] < @lexer[3]
+			if IsIdentifier(@lexer[2][@lexer[1]]) then
+				@lexer[1] = @lexer[1] + 1
+			else 
+				break
+			end if
+		end while
+		result[1]= @lexer[2][@startPos : @lexer[1]]
+		if IsKeyword(@result[1]) then
+			result[0] = @TypeKeyword
+		else
+			result[0] = @TypeIdentifier
+		end if
+		if @result[1]== "end" then
+			nextWord = LexerDequeue(@lexer)
+			if @nextWord isa @Exception then return @nextWord
+			if @nextWord != null and @nextWord[0] == @TypeKeyword then
+				result[1]= @result[1] + " " + @nextWord[1]
+			else
+				return NewLexerExceptionM("'end' without following keyword ('if', 'function', etc")
+			end if
+		else if @result[1]== "else" then
+			p = @lexer[1]
+			while (@p < @lexer[3] and (@lexer[2][@p] == " " or @lexer[2][@p] == char(9)))
+				p = @p + 1
+			end while
+			if @p + 1 < @lexer[3] and @lexer[2][@p:@p + 2] == "if" and (@p + 2 >= @lexer[3] or not IsIdentifier(@lexer[2][@p + 2])) then
+				result[1]= "else if"
+				lexer[1] = @p + 2
+			end if
+		end if
+		return @result
+	else if @c == """" then
+		result[0] = @TypeString
+		haveDoubledQuotes = false
+		startPos = @lexer[1]
+		gotEndQuote = false
+		while @lexer[1] < @lexer[3]
+			c = @lexer[2][@lexer[1]]
+			@lexer[1] = @lexer[1] + 1
+			if @c == """" then
+				if @lexer[1] < @lexer[3] and @lexer[2][@lexer[1]] == """" then
+					haveDoubledQuotes = true
+					lexer[1] = @lexer[1] + 1
+				else
+					gotEndQuote = true
+					break
+				end if
+			else if @c == char(10) or @c == char(13) then
+				break
+			end if
+		end while
+		if not @gotEndQuote then
+			return NewLexerExceptionM("missing closing quote ("")")
+		end if
+		result[1]= @lexer[2][@startPos:@lexer[1]-1]
+		if @haveDoubledQuotes then
+			result[1]= @result[1].replace("""""", """")
+		end if
+		return @result
+	else
+		result[0] = @TypeUnknown
+	end if
+	result[1]= @lexer[2][startPos:@lexer[1]]
+	return @result
+end function
+// @return void
+LexerSkipWhitespaceAndComment = function(lexer)
+	while not LexerAtEnd(@lexer) and IsWhitespace(@lexer[2][@lexer[1]])
+		lexer[1] = @lexer[1] + 1
+	end while
+
+	if @lexer[1] < lexer[2].len - 1 and @lexer[2][@lexer[1]] == "/" and @lexer[2][@lexer[1] + 1] == "/" then
+		lexer[1] = @lexer[1] + 2
+		while not LexerAtEnd(@lexer) and 
+			@lexer[2][@lexer[1]] != char(10)
+			lexer[1] = @lexer[1] + 1
+		end while
+	end if
+end function
+// @return bool
+IsNumeric = function(c)
+	return "0" <= @c <= "9"
+end function
+// @return bool
+IsIdentifier = function(c)
+	return (@c == "_" or 
+		"a" <= @c <= "z" or 
+		"A" <= @c <= "Z" or 
+		"0" <= @c <= "9")
+end function
+// @return bool
+IsWhitespace = function(c)
+	return @c == " " or @c == char(9)
+end function
+// @return bool
+LexerIsAtWhitespace = function(lexer)
+	return LexerAtEnd(@lexer) or IsWhitespace(@lexer[2][@lexer[1]])
+end function
+// @static
+// @return bool
+IsInStringLiteral = function(charPos, source, startPos)
+	inString = false
+	for i in range(@startPos, @charPos-1, 1)
+		if @source[@i] == """" then
+			inString = not @inString
+		end if
+	end for
+	return @inString
+end function
+// @static
+// @return int
+CommentStartPos = function(source, startPos)
+	commentStart = @startPos - 2
+	while true
+		commentStart = source.indexOf("//", @commentStart + 2)
+		if @commentStart == null then
+			break
+		end if
+		if not IsInStringLiteral(@commentStart, @source, @startPos) then
+			break
+		end if
+	end while
+	return @commentStart
+end function
+// @static
+// @return int
+LastIndexOf = function(s, value)
+    for i in range(0, s.len - 1, 1)
+		ret = s.indexOf(value, i)
+		if @ret != null then
+			return @ret
+		end if
+	end for
+    return -1
+end function
+// @static
+// @return string
+TrimComment = function(source)
+	startPos = LastIndexOf(@source, char(10)) + 1
+	commentStart = CommentStartPos(@source, @startPos)
+	if commentStart >= 0 then
+		return source[@startPos:@commentStart]
+	end if
+	return @source
+end function
+// @static
+// @throwable
+// @return Token
+LastToken = function(source)
+	startPos = LastIndexOf(@source, char(10)) + 1
+	commentStart = CommentStartPos(@source, @startPos)
+	if @commentStart >= 0 then
+		endPos = @commentStart - 1
+	else
+		endPos = source.len - 1
+	end if
+	while (@endPos >= 0 and IsWhitespace(@source[@endPos]))
+		endPos = @endPos - 1
+	end while
+	if @endPos < 0 then return @TypeEOL
+
+	tokStart = @endPos
+	c = @source[@endPos]
+	if IsIdentifier(@c) then
+		while @tokStart > @startPos and IsIdentifier(@source[@tokStart - 1])
+			tokStart = @tokStart - 1
+		end while
+	else if @c == """" then
+		inQuote = true
+		while @tokStart > @startPos
+			tokStart = @tokStart - 1
+			if @source[@tokStart] == """" then
+				inQuote = not @inQuote
+				if not @inQuote and @tokStart > @startPos and @source[(@tokStart - 1)] != """" then
+					break
+				end if
+			end if
+		end while
+	else if @c == "=" and @tokStart > @startPos then
+		c2 = @source[@tokStart - 1]
+		if c2 == ">" or c2 == "<" or c2 == "=" or c2 == "!" then tokStart = @tokStart - 1
+	end if
+	lex = NewLexer(@source)
+	lex[1] = @tokStart
+	return LexerDequeue(@lex)
+end function
+// @static
+// @return null
+Check = function(tok, type, text=null)
+	if @tok isa @Exception then return
+	ErrorIfNull(@tok)
+	if @tok == null then return
+	ErrorIf(@tok[0] != @type, "Token type: expected " + @type + ", but got " + @tok[0])
+	ErrorIf(@text != null and @tok[1] != @text, "Token text: expected " + @text + ", but got " + @tok[1])
+end function
+// @static
+// @return null
+CheckLineNum = function(actual, expected)
+	ErrorIf(@actual != @expected, "Lexer line number: expected " + @expected + ", but got " + @actual)
+end function
+// @static
+// @return null
+LexerRunUnitTests = function
+	startTime = time
+    lex = NewLexer("42 * 3.14158")
+    Check(LexerDequeue(@lex), @TypeNumber, "42")
+    CheckLineNum(@lex[0], 1)
+    Check(LexerDequeue(@lex), @TypeOpTimes)
+    Check(LexerDequeue(@lex), @TypeNumber, "3.14158")
+	
+    ErrorIf(not LexerAtEnd(@lex), "AtEnd not set when it should be")
+    CheckLineNum(@lex[0], 1)
+
+    lex = NewLexer("6*(.1-foo) end if // and a comment!")
+    Check(LexerDequeue(@lex), @TypeNumber, "6")
+    CheckLineNum(@lex[0], 1)
+    Check(LexerDequeue(@lex), @TypeOpTimes)
+    Check(LexerDequeue(@lex), @TypeLParen)
+    Check(LexerDequeue(@lex), @TypeNumber, ".1")
+    Check(LexerDequeue(@lex), @TypeOpMinus)
+    Check(LexerPeek(@lex), @TypeIdentifier, "foo")
+	Check(LexerPeek(@lex), @TypeIdentifier, "foo")
+	Check(LexerDequeue(@lex), @TypeIdentifier, "foo")
+	Check(LexerDequeue(@lex), @TypeRParen)
+    Check(LexerDequeue(@lex), @TypeKeyword, "end if")
+    Check(LexerDequeue(@lex), @TypeEOL)
+	ErrorIf(not LexerAtEnd(@lex), "AtEnd not set when it should be")
+    CheckLineNum(@lex[0], 1)
+
+    lex = NewLexer("""foo"" ""isn't """"real"""""" ""now """""""" double!""")
+    Check(LexerDequeue(@lex), @TypeString, "foo")
+    Check(LexerDequeue(@lex), @TypeString, "isn't ""real""")
+    Check(LexerDequeue(@lex), @TypeString, "now """" double!")
+    ErrorIf(not LexerAtEnd(@lex), "AtEnd not set when it should be")
+
+    lex = NewLexer("foo" + char(10) + "bar" + char(13) + "baz" + char(13) + char(10) + "bamf")
+    Check(LexerDequeue(@lex), @TypeIdentifier, "foo")
+    CheckLineNum(@lex[0], 1)
+    Check(LexerDequeue(@lex), @TypeEOL)
+    Check(LexerDequeue(@lex), @TypeIdentifier, "bar")
+    CheckLineNum(@lex[0], 2)
+    Check(LexerDequeue(@lex), @TypeEOL)
+    Check(LexerDequeue(@lex), @TypeIdentifier, "baz")
+    CheckLineNum(@lex[0], 3)
+    Check(LexerDequeue(@lex), @TypeEOL)
+    Check(LexerDequeue(@lex), @TypeIdentifier, "bamf")
+    CheckLineNum(@lex[0], 4)
+    Check(LexerDequeue(@lex), @TypeEOL)
+	ErrorIf(not LexerAtEnd(lex), "AtEnd not set when it should be")
+
+    lex = NewLexer("x += 42")
+    Check(LexerDequeue(@lex), @TypeIdentifier, "x")
+    CheckLineNum(@lex[0], 1)
+    Check(LexerDequeue(@lex), @TypeOpAssignPlus)
+    Check(LexerDequeue(@lex), @TypeNumber)
+	ErrorIf(not LexerAtEnd(lex), "AtEnd not set when it should be")
+
+    Check(LastToken("x=42 // foo"), @TypeNumber, "42")
+    Check(LastToken("x = [1, 2, // foo"), @TypeComma)
+    Check(LastToken("x = [1, 2 // foo"), @TypeNumber, "2")
+    Check(LastToken("x = [1, 2 // foo // and ""more"" foo"), @TypeNumber, "2")
+    Check(LastToken("x = [""foo"", ""//bar""]"), @TypeRSquare)
+    Check(LastToken("print 1 // line 1" + char(10) + "print 2"), @TypeNumber, "2")
+    Check(LastToken("print ""Hi""""Quote"" // foo bar"), @TypeString, "Hi""Quote")
+	WriteLine("Lexer UnitTests finished in " + str(time - @startTime) + " seconds.")
+end function
+// @static
+// @return null
+UnitTestRun = function
+	LexerRunUnitTests()
+end function
+UnitTestRun()
