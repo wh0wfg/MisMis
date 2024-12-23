@@ -3,7 +3,7 @@ Miniscript intepreter implemented by miniscript.
 
 Lexer is translated from official C# MiniscriptLexer.cs implementation.
 
-![TAC virtual machine implementation](testgsi.src) has been abandoned due to performance problem, and parser therefore is adjusted to the virtual machine. 
+[TAC virtual machine implementation](testgsi.src) has been abandoned due to performance problem, and parser therefore is adjusted to the virtual machine. 
 
 # Stack & Heap Based Virtual Machine (legacy)
 
